@@ -85,6 +85,7 @@ type syncStandaloneReader struct {
 
 	// version info
 	SupportPSYNC bool
+	isDiskless   bool
 }
 
 func NewSyncStandaloneReader(ctx context.Context, opts *SyncReaderOptions) Reader {
@@ -209,6 +210,8 @@ func (r *syncStandaloneReader) sendPSync() {
 		reply := r.client.DoWithStringReply(argv...)
 		if reply != "OK" {
 			log.Warnf("[%s] send replconf capa eof to redis server failed. reply=[%v]", r.stat.Name, reply)
+		} else {
+			r.isDiskless = true
 		}
 	}
 	r.checkBgsaveInProgress()
@@ -524,6 +527,12 @@ func (r *syncStandaloneReader) StatusString() string {
 	}
 	if r.stat.Status == kSyncAof {
 		return fmt.Sprintf("%s, diff=[%v]", r.stat.Status, -r.stat.AofSentOffset+r.stat.AofReceivedOffset)
+	}
+	if r.stat.Status == kReceiveRdb {
+		if r.isDiskless {
+			return fmt.Sprintf("%s diskless, size=[%s]", r.stat.Status, r.stat.RdbReceivedHuman)
+		}
+		return fmt.Sprintf("%s, size=[%s/%s]", r.stat.Status, r.stat.RdbReceivedHuman, r.stat.RdbFileSizeHuman)
 	}
 	return string(r.stat.Status)
 }

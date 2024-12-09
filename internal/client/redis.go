@@ -23,7 +23,7 @@ type Redis struct {
 	protoReader *proto.Reader
 	protoWriter *proto.Writer
 	timer       *time.Timer
-	sendCount   uint64
+	sendBytes   uint64
 	mu          sync.Mutex
 }
 
@@ -205,13 +205,10 @@ func (r *Redis) SendBytesBuff(buf []byte) {
 	if err != nil {
 		log.Panicf(err.Error())
 	}
-	r.flushBuff()
+	r.flushBuff(len(buf))
 }
 
-func (r *Redis) flushBuff() {
-	if atomic.AddUint64(&r.sendCount, 1)%100 != 0 {
-		return
-	}
+func (r *Redis) resetTimer() {
 	if !r.timer.Stop() {
 		select {
 		case <-r.timer.C:
@@ -219,7 +216,16 @@ func (r *Redis) flushBuff() {
 		}
 	}
 	r.timer.Reset(time.Second)
-	r.flush()
+}
+
+func (r *Redis) flushBuff(l int) {
+	// if the data size is too small, no need to flush
+	if atomic.AddUint64(&r.sendBytes, uint64(l)) > 64*1024 {
+		r.flush()
+		r.resetTimer()
+		return
+	}
+	r.resetTimer()
 }
 
 func (r *Redis) flush() {
@@ -227,7 +233,7 @@ func (r *Redis) flush() {
 	if err != nil {
 		log.Panicf(err.Error())
 	}
-	atomic.StoreUint64(&r.sendCount, 0)
+	atomic.StoreUint64(&r.sendBytes, 0)
 }
 
 func (r *Redis) autoFlush(ctx context.Context) {
@@ -236,7 +242,7 @@ func (r *Redis) autoFlush(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-r.timer.C:
-			if atomic.LoadUint64(&r.sendCount) > 0 {
+			if atomic.LoadUint64(&r.sendBytes) > 0 {
 				r.mu.Lock()
 				err := r.writer.Flush()
 				r.mu.Unlock()
