@@ -13,13 +13,15 @@ import (
 )
 
 type AOFReaderOptions struct {
-	Filepath     string `mapstructure:"filepath" default:""`
-	AOFTimestamp int64  `mapstructure:"timestamp" default:"0"`
+	Filepath      string `mapstructure:"filepath" default:""`
+	AOFTimestamp  int64  `mapstructure:"timestamp" default:"0"`
+	ReaderBufSize int    `mapstructure:"reader_buf_size" default:"4096"`
 }
 
 type aofReader struct {
-	path string
-	ch   chan *entry.Entry
+	path    string
+	ch      chan *entry.Entry
+	bufSize int
 
 	stat struct {
 		AOFName          string `json:"aof_name"`
@@ -63,22 +65,23 @@ func NewAOFReader(opts *AOFReaderOptions) Reader {
 	r.stat.AOFFileSizeBytes = int64(utils.GetFileSize(absolutePath))
 	r.stat.AOFFileSizeHuman = humanize.Bytes(uint64(r.stat.AOFFileSizeBytes))
 	r.stat.AOFTimestamp = opts.AOFTimestamp
+	r.bufSize = opts.ReaderBufSize
 	return r
 }
 
 func (r *aofReader) StartRead(ctx context.Context) []chan *entry.Entry {
-	//init entry
+	// init entry
 	r.ch = make(chan *entry.Entry, 1024)
 
 	// start read aof
 	go func() {
-		aofFileInfo := NewAOFFileInfo(r.path, r.ch)
+		aofFileInfo := NewAOFFileInfo(r.path, r.bufSize, r.ch)
 		// try load manifest file
 		aofFileInfo.AOFLoadManifestFromDisk()
 		manifestInfo := aofFileInfo.AOFManifest
 		if manifestInfo == nil { // load single aof file
 			log.Infof("start send single AOF path=[%s]", r.path)
-			aofLoader := aof.NewLoader(r.path, r.ch)
+			aofLoader := aof.NewLoader(r.path, r.bufSize, r.ch)
 			ret := aofLoader.LoadSingleAppendOnlyFile(ctx, r.stat.AOFTimestamp)
 			if ret == AOFOk || ret == AOFTruncated {
 				log.Infof("The AOF File was successfully loaded")
@@ -88,7 +91,7 @@ func (r *aofReader) StartRead(ctx context.Context) []chan *entry.Entry {
 			log.Infof("Send single AOF finished. path=[%s]", r.path)
 			close(r.ch)
 		} else {
-			aofLoader := NewAOFFileInfo(r.path, r.ch)
+			aofLoader := NewAOFFileInfo(r.path, r.bufSize, r.ch)
 			ret := aofLoader.LoadAppendOnlyFile(ctx, manifestInfo, r.stat.AOFTimestamp)
 			if ret == AOFOk || ret == AOFTruncated {
 				log.Infof("The AOF File was successfully loaded")
@@ -98,7 +101,6 @@ func (r *aofReader) StartRead(ctx context.Context) []chan *entry.Entry {
 			log.Infof("Send multi-part AOF finished. path=[%s]", r.path)
 			close(r.ch)
 		}
-
 	}()
 
 	return []chan *entry.Entry{r.ch}

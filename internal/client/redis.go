@@ -22,9 +22,9 @@ type Redis struct {
 	writer      *bufio.Writer
 	protoReader *proto.Reader
 	protoWriter *proto.Writer
-	timer     *time.Timer
-	sendCount uint64
-	mu        sync.Mutex
+	timer       *time.Timer
+	sendCount   uint64
+	mu          sync.Mutex
 }
 
 func NewSentinelMasterClient(ctx context.Context, address string, username string, password string, Tls bool) *Redis {
@@ -32,9 +32,14 @@ func NewSentinelMasterClient(ctx context.Context, address string, username strin
 }
 
 func NewRedisClient(ctx context.Context, address string, username string, password string, Tls bool, replica bool) *Redis {
+	const defaultBufSize = 4096
+	return NewBufSizedRedisClient(ctx, address, username, password, Tls, false, defaultBufSize, defaultBufSize)
+}
+
+func NewBufSizedRedisClient(ctx context.Context, address string, username string, password string, Tls bool, replica bool, rBufSize, wBufSize int) *Redis {
 	r := new(Redis)
 	var conn net.Conn
-	var dialer = &net.Dialer{
+	dialer := &net.Dialer{
 		Timeout:   5 * time.Minute,
 		KeepAlive: 5 * time.Minute,
 	}
@@ -55,8 +60,8 @@ func NewRedisClient(ctx context.Context, address string, username string, passwo
 	}
 
 	r.conn = conn
-	r.reader = bufio.NewReader(conn)
-	r.writer = bufio.NewWriter(conn)
+	r.reader = bufio.NewReaderSize(conn, rBufSize)
+	r.writer = bufio.NewWriterSize(conn, wBufSize)
 	r.protoReader = proto.NewReader(r.reader)
 	r.protoWriter = proto.NewWriter(r.writer)
 
@@ -83,7 +88,7 @@ func NewRedisClient(ctx context.Context, address string, username string, passwo
 	if replica {
 		replicaInfo := getReplicaAddr(reply, address)
 		log.Infof("best replica: %s", replicaInfo.BestReplica)
-		r = NewRedisClient(ctx, replicaInfo.BestReplica, username, password, Tls, false)
+		r = NewBufSizedRedisClient(ctx, replicaInfo.BestReplica, username, password, Tls, false, rBufSize, wBufSize)
 	}
 
 	r.timer = time.NewTimer(time.Second)

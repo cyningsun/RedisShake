@@ -51,6 +51,7 @@ type Loader struct {
 
 	filPath string
 	fp      *os.File
+	bufSize int
 
 	ch         chan *entry.Entry
 	dumpBuffer bytes.Buffer
@@ -59,8 +60,9 @@ type Loader struct {
 	updateFunc func(int64)
 }
 
-func NewLoader(name string, updateFunc func(int64), filPath string, ch chan *entry.Entry) *Loader {
+func NewLoader(name string, bufSize int, updateFunc func(int64), filPath string, ch chan *entry.Entry) *Loader {
 	ld := new(Loader)
+	ld.bufSize = bufSize
 	ld.ch = ch
 	ld.filPath = filPath
 	ld.name = name
@@ -72,7 +74,7 @@ func NewLoader(name string, updateFunc func(int64), filPath string, ch chan *ent
 // return repl stream db id
 func (ld *Loader) ParseRDB(ctx context.Context) int {
 	var err error
-	ld.fp, err = os.OpenFile(ld.filPath, os.O_RDONLY, 0666)
+	ld.fp, err = os.OpenFile(ld.filPath, os.O_RDONLY, 0o666)
 	if err != nil {
 		log.Panicf("open file failed. file_path=[%s], error=[%s]", ld.filPath, err)
 	}
@@ -82,7 +84,7 @@ func (ld *Loader) ParseRDB(ctx context.Context) int {
 			log.Panicf("close file failed. file_path=[%s], error=[%s]", ld.filPath, err)
 		}
 	}()
-	rd := bufio.NewReader(ld.fp)
+	rd := bufio.NewReaderSize(ld.fp, ld.bufSize)
 	// magic + version
 	buf := make([]byte, 9)
 	_, err = io.ReadFull(rd, buf)

@@ -25,15 +25,19 @@ import (
 )
 
 type SyncReaderOptions struct {
-	Cluster       bool   `mapstructure:"cluster" default:"false"`
-	Address       string `mapstructure:"address" default:""`
-	Username      string `mapstructure:"username" default:""`
-	Password      string `mapstructure:"password" default:""`
-	Tls           bool   `mapstructure:"tls" default:"false"`
-	SyncRdb       bool   `mapstructure:"sync_rdb" default:"true"`
-	SyncAof       bool   `mapstructure:"sync_aof" default:"true"`
-	PreferReplica bool   `mapstructure:"prefer_replica" default:"false"`
-	TryDiskless   bool   `mapstructure:"try_diskless" default:"false"`
+	Cluster          bool   `mapstructure:"cluster" default:"false"`
+	Address          string `mapstructure:"address" default:""`
+	Username         string `mapstructure:"username" default:""`
+	Password         string `mapstructure:"password" default:""`
+	Tls              bool   `mapstructure:"tls" default:"false"`
+	SyncRdb          bool   `mapstructure:"sync_rdb" default:"true"`
+	SyncAof          bool   `mapstructure:"sync_aof" default:"true"`
+	PreferReplica    bool   `mapstructure:"prefer_replica" default:"false"`
+	TryDiskless      bool   `mapstructure:"try_diskless" default:"false"`
+	TCPReaderBufSize int    `mapstructure:"tcp_reader_buf_size" default:"4096"`
+	TCPWriterBufSize int    `mapstructure:"tcp_writer_buf_size" default:"4096"`
+	RDBReaderBufSize int    `mapstructure:"rdb_reader_buf_size" default:"4096"`
+	RDBWriterBufSize int    `mapstructure:"rdb_writer_buf_size" default:"33554432"`
 }
 
 type State string
@@ -80,13 +84,13 @@ type syncStandaloneReader struct {
 	}
 
 	// version info
-	SupportPSYNC  bool
+	SupportPSYNC bool
 }
 
 func NewSyncStandaloneReader(ctx context.Context, opts *SyncReaderOptions) Reader {
 	r := new(syncStandaloneReader)
 	r.opts = opts
-	r.client = client.NewRedisClient(ctx, opts.Address, opts.Username, opts.Password, opts.Tls, opts.PreferReplica)
+	r.client = client.NewBufSizedRedisClient(ctx, opts.Address, opts.Username, opts.Password, opts.Tls, opts.PreferReplica, opts.TCPReaderBufSize, opts.TCPWriterBufSize)
 	r.rd = r.client.BufioReader()
 	r.stat.Name = "reader_" + strings.Replace(opts.Address, ":", "_", -1)
 	r.stat.Address = opts.Address
@@ -94,21 +98,20 @@ func NewSyncStandaloneReader(ctx context.Context, opts *SyncReaderOptions) Reade
 	r.stat.Dir = utils.GetAbsPath(r.stat.Name)
 	utils.CreateEmptyDir(r.stat.Dir)
 
-	r.SupportPSYNC = r.supportPSYNC();
+	r.SupportPSYNC = r.supportPSYNC()
 	return r
 }
-
 
 func (r *syncStandaloneReader) supportPSYNC() bool {
 	reply := r.client.DoWithStringReply("info", "server")
 	for _, line := range strings.Split(reply, "\n") {
 		if strings.HasPrefix(line, "redis_version:") {
 			version := strings.Split(line, ":")[1]
-			parts := strings.Split(version,".");
-			if len(parts) > 2{
-				v1,_ := strconv.Atoi(parts[0]);
-				v2,_ := strconv.Atoi(parts[1]);
-				if v1 * 1000  + v2 < 2008{
+			parts := strings.Split(version, ".")
+			if len(parts) > 2 {
+				v1, _ := strconv.Atoi(parts[0])
+				v2, _ := strconv.Atoi(parts[1])
+				if v1*1000+v2 < 2008 {
 					return false
 				}
 			}
@@ -116,12 +119,12 @@ func (r *syncStandaloneReader) supportPSYNC() bool {
 		}
 	}
 
-	return true;
+	return true
 }
 
 func (r *syncStandaloneReader) StartRead(ctx context.Context) []chan *entry.Entry {
-	if !r.SupportPSYNC{
-		return r.StartReadWithSync(ctx);
+	if !r.SupportPSYNC {
+		return r.StartReadWithSync(ctx)
 	}
 	r.ctx = ctx
 	r.ch = make(chan *entry.Entry, 1024)
@@ -149,11 +152,11 @@ func (r *syncStandaloneReader) StartReadWithSync(ctx context.Context) []chan *en
 	r.ctx = ctx
 	r.ch = make(chan *entry.Entry, 1024)
 	go func() {
-		//r.sendReplconfListenPort()
+		// r.sendReplconfListenPort()
 		r.sendSync()
 		rdbFilePath := r.receiveRDB()
 		startOffset := r.stat.AofReceivedOffset
-		//go r.sendReplconfAck() // start sent replconf ack
+		// go r.sendReplconfAck() // start sent replconf ack
 		go r.receiveAOF(r.rd)
 		if r.opts.SyncRdb {
 			r.sendRDB(rdbFilePath)
@@ -309,19 +312,23 @@ func (r *syncStandaloneReader) receiveRDB() string {
 	}
 	timeStart = time.Now()
 	log.Debugf("[%s] start receiving RDB. path=[%s]", r.stat.Name, rdbFilePath)
-	rdbFileHandle, err := os.OpenFile(rdbFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0666)
+	rdbFileHandle, err := os.OpenFile(rdbFilePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
 		log.Panicf(err.Error())
 	}
+
+	rdbWriter := bufio.NewWriterSize(rdbFileHandle, r.opts.RDBWriterBufSize)
 
 	// receive rdb
 	r.stat.Status = kReceiveRdb
 	if strings.HasPrefix(marker, "EOF") {
 		log.Infof("[%s] source db supoort diskless sync capability.", r.stat.Name)
-		r.receiveRDBWithDiskless(marker, rdbFileHandle)
+		r.receiveRDBWithDiskless(marker, rdbWriter)
 	} else {
-		r.receiveRDBWithoutDiskless(marker, rdbFileHandle)
+		r.receiveRDBWithoutDiskless(marker, rdbWriter)
 	}
+	rdbWriter.Flush()
+
 	err = rdbFileHandle.Close()
 	if err != nil {
 		log.Panicf(err.Error())
@@ -433,7 +440,7 @@ func (r *syncStandaloneReader) sendRDB(rdbFilePath string) {
 		r.stat.RdbSentBytes = offset
 		r.stat.RdbSentHuman = humanize.IBytes(uint64(offset))
 	}
-	rdbLoader := rdb.NewLoader(r.stat.Name, updateFunc, rdbFilePath, r.ch)
+	rdbLoader := rdb.NewLoader(r.stat.Name, r.opts.RDBReaderBufSize, updateFunc, rdbFilePath, r.ch)
 	r.DbId = rdbLoader.ParseRDB(r.ctx)
 	log.Debugf("[%s] send RDB finished", r.stat.Name)
 	// delete file

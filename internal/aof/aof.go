@@ -25,12 +25,15 @@ const (
 type Loader struct {
 	filePath string
 	ch       chan *entry.Entry
+	bufSize  int
 }
 
-func NewLoader(filePath string, ch chan *entry.Entry) *Loader {
+func NewLoader(filePath string, bufSize int, ch chan *entry.Entry) *Loader {
 	ld := new(Loader)
 	ld.ch = ch
 	ld.filePath = filePath
+	ld.bufSize = bufSize
+
 	return ld
 }
 
@@ -72,14 +75,13 @@ func (ld *Loader) LoadSingleAppendOnlyFile(ctx context.Context, timestamp int64)
 				log.Infof("The append log File %v doesn't exist: %v", filePath, err.Error())
 				return NotExist
 			}
-
 		}
 		stat, _ := fp.Stat()
 		if stat.Size() == 0 {
 			return Empty
 		}
 	}
-	reader := bufio.NewReader(fp)
+	reader := bufio.NewReaderSize(fp, ld.bufSize)
 	for {
 		select {
 		case <-ctx.Done():

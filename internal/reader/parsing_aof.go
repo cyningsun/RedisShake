@@ -39,7 +39,6 @@ func Ustime() int64 {
 	tv := time.Now()
 	ust := int64(tv.UnixNano()) / 1000
 	return ust
-
 }
 
 func MakePath(Paths string, FileName string) string {
@@ -68,6 +67,7 @@ type INFO struct {
 	AOFFileName        string
 	AOFCurrentSize     int64
 	AOFRewriteBaseSize int64
+	ReaderBufSize      int
 	updateLoadingFile  string
 	ch                 chan *entry.Entry
 }
@@ -76,7 +76,7 @@ func (aofInfo *INFO) GetAOFDirName() string {
 	return aofInfo.AOFDirName
 }
 
-func NewAOFFileInfo(aofFilePath string, ch chan *entry.Entry) *INFO {
+func NewAOFFileInfo(aofFilePath string, bufSize int, ch chan *entry.Entry) *INFO {
 	return &INFO{
 		AOFDirName:         filepath.Dir(aofFilePath),
 		AOFUseRDBPreamble:  0,
@@ -84,6 +84,7 @@ func NewAOFFileInfo(aofFilePath string, ch chan *entry.Entry) *INFO {
 		AOFFileName:        filepath.Base(aofFilePath),
 		AOFCurrentSize:     0,
 		AOFRewriteBaseSize: 0,
+		ReaderBufSize:      bufSize,
 		ch:                 ch,
 	}
 }
@@ -155,13 +156,13 @@ func HexDigitToInt(c byte) int {
 }
 
 func SplitArgs(line string) ([]string, int) {
-	var p = line
+	p := line
 	var Current string
 	var vector []string
 	argc := 0
 	i := 0
 	lens := len(p)
-	for { //SKIP BLANKS
+	for { // SKIP BLANKS
 		for i < lens && unicode.IsSpace(rune(p[i])) {
 			i++
 		}
@@ -172,7 +173,6 @@ func SplitArgs(line string) ([]string, int) {
 
 			for !done {
 				if inq {
-
 					if p[i] == '\\' && (p[i+1]) == 'x' && IsHexDigit(p[i+2]) && IsHexDigit(p[i+3]) {
 						_, err1 := strconv.ParseInt(string(p[i+2]), 16, 64)
 						_, err2 := strconv.ParseInt(string(p[i+3]), 16, 64)
@@ -220,7 +220,6 @@ func SplitArgs(line string) ([]string, int) {
 					} else {
 						Current += string(p[i])
 					}
-
 				} else {
 					switch p[i] {
 					case ' ', '\n', '\r', '\t', '\000':
@@ -345,7 +344,6 @@ func AOFLoadManifestFromFile(amFilepath string) *AOFManifest {
 				} else {
 					break
 				}
-
 			} else {
 				log.Infof("Reading the manifest file, at line %d", lineNum)
 				log.Infof("Read AOF manifest failed")
@@ -455,7 +453,6 @@ func GetAOFManifestAsString(am *AOFManifest) string {
 		buf = AOFInfoFormat(buf, ln.Value.(*AOFInfo))
 	}
 	return buf
-
 }
 
 func (aofInfo *INFO) AOFLoadManifestFromDisk() {
@@ -594,7 +591,7 @@ func (aofInfo *INFO) LoadAppendOnlyFile(ctx context.Context, am *AOFManifest, AO
 			aofInfo.UpdateLoadingFileName(AOFName)
 			BaseSize = aofInfo.GetAppendOnlyFileSize(AOFName, nil)
 			start = Ustime()
-			ret = aofInfo.ParsingSingleAppendOnlyFile(ctx, AOFName, 0) //Currently, RDB files cannot be restored at a point in time.
+			ret = aofInfo.ParsingSingleAppendOnlyFile(ctx, AOFName, 0) // Currently, RDB files cannot be restored at a point in time.
 			if ret == AOFOk || (ret == AOFTruncated) {
 				log.Infof("DB loaded from Base File %v: %.3f seconds", AOFName, float64(Ustime()-start)/1000000)
 			}
@@ -688,7 +685,6 @@ func (aofInfo *INFO) LoadAppendOnlyFile(ctx context.Context, am *AOFManifest, AO
 
 	log.Infof("The AOF File loading end.")
 	return ret
-
 }
 
 func (aofInfo *INFO) ParsingSingleAppendOnlyFile(ctx context.Context, FileName string, AOFTimeStamp int64) int {
@@ -704,7 +700,6 @@ func (aofInfo *INFO) ParsingSingleAppendOnlyFile(ctx context.Context, FileName s
 				log.Infof("The append log File %v doesn't exist: %v", FileName, err.Error())
 				return AOFNotExist
 			}
-
 		}
 
 		stat, _ := fp.Stat()
@@ -719,7 +714,7 @@ func (aofInfo *INFO) ParsingSingleAppendOnlyFile(ctx context.Context, FileName s
 			log.Infof("Unrecoverable error reading the append only File %v: %v", FileName, err)
 			return AOFFailed
 		}
-	} else { //Skipped RDB checksum and has not been processed yet.
+	} else { // Skipped RDB checksum and has not been processed yet.
 		log.Infof("Reading RDB Base File on AOF loading...")
 		rdbOpt := RdbReaderOptions{Filepath: AOFFilepath}
 		ldRDB := NewRDBReader(&rdbOpt)
@@ -727,6 +722,6 @@ func (aofInfo *INFO) ParsingSingleAppendOnlyFile(ctx context.Context, FileName s
 		return AOFOk
 	}
 	// load single aof file
-	aofSingleReader := aof.NewLoader(MakePath(aofInfo.AOFDirName, FileName), aofInfo.ch)
+	aofSingleReader := aof.NewLoader(MakePath(aofInfo.AOFDirName, FileName), aofInfo.ReaderBufSize, aofInfo.ch)
 	return aofSingleReader.LoadSingleAppendOnlyFile(ctx, AOFTimeStamp)
 }

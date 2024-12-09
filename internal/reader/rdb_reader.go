@@ -13,11 +13,13 @@ import (
 )
 
 type RdbReaderOptions struct {
-	Filepath string `mapstructure:"filepath" default:""`
+	Filepath      string `mapstructure:"filepath" default:""`
+	ReaderBufSize int    `mapstructure:"reader_buf_size" default:"4096"`
 }
 
 type rdbReader struct {
-	ch chan *entry.Entry
+	ch      chan *entry.Entry
+	bufSize int
 
 	stat struct {
 		Name          string `json:"name"`
@@ -34,6 +36,7 @@ type rdbReader struct {
 func NewRDBReader(opts *RdbReaderOptions) Reader {
 	absolutePath := utils.GetAbsPath(opts.Filepath)
 	r := new(rdbReader)
+	r.bufSize = opts.ReaderBufSize
 	r.stat.Name = "rdb_reader"
 	r.stat.Status = "init"
 	r.stat.Filepath = absolutePath
@@ -51,7 +54,7 @@ func (r *rdbReader) StartRead(ctx context.Context) []chan *entry.Entry {
 		r.stat.Percent = fmt.Sprintf("%.2f%%", float64(offset)/float64(r.stat.FileSizeBytes)*100)
 		r.stat.Status = fmt.Sprintf("[%s] rdb file synced: %s", r.stat.Name, r.stat.Percent)
 	}
-	rdbLoader := rdb.NewLoader(r.stat.Name, updateFunc, r.stat.Filepath, r.ch)
+	rdbLoader := rdb.NewLoader(r.stat.Name, r.bufSize, updateFunc, r.stat.Filepath, r.ch)
 
 	go func() {
 		_ = rdbLoader.ParseRDB(ctx)

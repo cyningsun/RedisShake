@@ -8,6 +8,10 @@ sync_rdb = true            # set to false if you don't want to sync rdb
 sync_aof = true            # set to false if you don't want to sync aof
 prefer_replica = false     # set to true if you want to sync from replica node
 try_diskless = false       # set to true if you want to sync by socket and source repl-diskless-sync=yes
+tcp_reader_buf_size = 4096 # set to default value of bufio.NewReader
+tcp_writer_buf_size = 4096  # set to default value of bufio.NewWriter
+rdb_reader_buf_size = 4096 # set to default value of bufio.NewReader
+rdb_writer_buf_size = 33554432 # 32*1024*1024
 
 #[scan_reader]
 #cluster = false            # set to true if source is a redis cluster
@@ -19,13 +23,17 @@ try_diskless = false       # set to true if you want to sync by socket and sourc
 #scan = true                # set to false if you don't want to scan keys
 #ksn = false                # set to true to enabled Redis keyspace notifications (KSN) subscription
 #count = 1                  # number of keys to scan per iteration
+#tcp_reader_buf_size = 4096 # set to default value of bufio.NewReader
+#tcp_writer_buf_size = 4096  # set to default value of bufio.NewWriter
 
 # [rdb_reader]
 # filepath = "/tmp/dump.rdb"
+# reader_buf_size = 4096 # set to default value of bufio.NewReader
 
 # [aof_reader]
 # filepath = "/tmp/.aof"
 # timestamp = 0            # subsecond
+# reader_buf_size = 4096 # set to default value of bufio.NewReader
 
 [redis_writer]
 cluster = false            # set to true if target is a redis cluster
