@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -51,6 +52,56 @@ const (
 	kSyncAof    State = "syncing aof"
 )
 
+type syncStandaloneReaderStat struct {
+	Name    string `json:"name"`
+	Address string `json:"address"`
+	Dir     string `json:"dir"`
+
+	// status
+	Status State `json:"status"`
+
+	// rdb info
+	RdbFileSizeBytes uint64 `json:"rdb_file_size_bytes"` // bytes of the rdb file
+	RdbReceivedBytes uint64 `json:"rdb_received_bytes"`  // bytes of RDB received from master
+	RdbSentBytes     uint64 `json:"rdb_sent_bytes"`      // bytes of RDB sent to chan
+
+	// aof info
+	AofReceivedOffset int64  `json:"aof_received_offset"` // offset of AOF received from master
+	AofSentOffset     int64  `json:"aof_sent_offset"`     // offset of AOF sent to chan
+	AofReceivedBytes  uint64 `json:"aof_received_bytes"`  // bytes of AOF received from master
+}
+
+func (s syncStandaloneReaderStat) MarshalJSON() ([]byte, error) {
+	rdbFileSizeHuman, rdbReceivedHuman, rdbSentHuman, aofReceivedHuman := "", "", "", ""
+	if s.RdbFileSizeBytes != 0 {
+		rdbFileSizeHuman = humanize.IBytes(s.RdbFileSizeBytes)
+	}
+	if s.RdbReceivedBytes != 0 {
+		rdbReceivedHuman = humanize.IBytes(s.RdbReceivedBytes)
+	}
+	if s.RdbSentBytes != 0 {
+		rdbSentHuman = humanize.IBytes(s.RdbSentBytes)
+	}
+	if s.AofReceivedBytes != 0 {
+		aofReceivedHuman = humanize.IBytes(s.AofReceivedBytes)
+	}
+
+	type aliasStat syncStandaloneReaderStat // alias to avoid infinite recursion
+	return json.Marshal(struct {
+		aliasStat
+		RdbFileSizeHuman string `json:"rdb_file_size_human"`
+		RdbReceivedHuman string `json:"rdb_received_human"`
+		RdbSentHuman     string `json:"rdb_sent_human"`
+		AofReceivedHuman string `json:"aof_received_human"`
+	}{
+		aliasStat:        aliasStat(s),
+		RdbFileSizeHuman: rdbFileSizeHuman,
+		RdbReceivedHuman: rdbReceivedHuman,
+		RdbSentHuman:     rdbSentHuman,
+		AofReceivedHuman: aofReceivedHuman,
+	})
+}
+
 type syncStandaloneReader struct {
 	ctx    context.Context
 	opts   *SyncReaderOptions
@@ -59,24 +110,7 @@ type syncStandaloneReader struct {
 	ch   chan *entry.Entry
 	DbId int
 
-	stat struct {
-		Name    string `json:"name"`
-		Address string `json:"address"`
-		Dir     string `json:"dir"`
-
-		// status
-		Status State `json:"status"`
-
-		// rdb info
-		RdbFileSizeBytes uint64 `json:"rdb_file_size_bytes"` // bytes of the rdb file
-		RdbReceivedBytes uint64 `json:"rdb_received_bytes"`  // bytes of RDB received from master
-		RdbSentBytes     int64  `json:"rdb_sent_bytes"`      // bytes of RDB sent to chan
-
-		// aof info
-		AofReceivedOffset int64 `json:"aof_received_offset"` // offset of AOF received from master
-		AofSentOffset     int64 `json:"aof_sent_offset"`     // offset of AOF sent to chan
-		AofReceivedBytes  int64 `json:"aof_received_bytes"`  // bytes of AOF received from master
-	}
+	stat syncStandaloneReaderStat
 
 	// version info
 	isDiskless bool
@@ -431,7 +465,7 @@ func (r *syncStandaloneReader) receiveAOF() {
 			if err != nil {
 				log.Panicf(err.Error())
 			}
-			r.stat.AofReceivedBytes += int64(n)
+			r.stat.AofReceivedBytes += uint64(n)
 			aofWriter.Write(buf[:n])
 			r.stat.AofReceivedOffset += int64(n)
 		}
@@ -443,7 +477,7 @@ func (r *syncStandaloneReader) sendRDB(rdbFilePath string) {
 	log.Debugf("[%s] start sending RDB to target", r.stat.Name)
 	r.stat.Status = kSyncRdb
 	updateFunc := func(offset int64) {
-		r.stat.RdbSentBytes = offset
+		r.stat.RdbSentBytes = uint64(offset)
 	}
 	rdbLoader := rdb.NewLoader(r.stat.Name, updateFunc, rdbFilePath, r.ch)
 	r.DbId = rdbLoader.ParseRDB(r.ctx)
@@ -534,7 +568,7 @@ func (r *syncStandaloneReader) Status() interface{} {
 
 func (r *syncStandaloneReader) StatusString() string {
 	if r.stat.Status == kSyncRdb {
-		return fmt.Sprintf("%s, size=[%s/%s]", r.stat.Status, humanize.IBytes(uint64(r.stat.RdbSentBytes)), humanize.IBytes(r.stat.RdbFileSizeBytes))
+		return fmt.Sprintf("%s, size=[%s/%s]", r.stat.Status, humanize.IBytes(r.stat.RdbSentBytes), humanize.IBytes(r.stat.RdbFileSizeBytes))
 	}
 	if r.stat.Status == kSyncAof {
 		return fmt.Sprintf("%s, diff=[%v]", r.stat.Status, -r.stat.AofSentOffset+r.stat.AofReceivedOffset)
