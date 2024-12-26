@@ -62,7 +62,7 @@ func Test_syncStandaloneReader_Status(t *testing.T) {
 
 			want, err := json.Marshal(tt.want)
 			if err != nil {
-				log.Warnf("marshal status failed, err=[%v]", err)
+				log.Warnf("marshal want failed, err=[%v]", err)
 				return
 			}
 
