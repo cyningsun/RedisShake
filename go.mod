@@ -11,6 +11,7 @@ require (
 	github.com/spf13/viper v1.18.1
 	github.com/stretchr/testify v1.8.4
 	github.com/yuin/gopher-lua v0.0.0-20220504180219-658193537a64
+	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 )
 
 require (
