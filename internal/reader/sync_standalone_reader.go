@@ -62,44 +62,35 @@ type syncStandaloneReaderStat struct {
 
 	// rdb info
 	RdbFileSizeBytes uint64 `json:"rdb_file_size_bytes"` // bytes of the rdb file
-	RdbReceivedBytes uint64 `json:"rdb_received_bytes"`  // bytes of RDB received from master
-	RdbSentBytes     uint64 `json:"rdb_sent_bytes"`      // bytes of RDB sent to chan
+	RdbFileSizeHuman string `json:"rdb_file_size_human"`
+	RdbReceivedBytes uint64 `json:"rdb_received_bytes"` // bytes of RDB received from master
+	RdbReceivedHuman string `json:"rdb_received_human"`
+	RdbSentBytes     uint64 `json:"rdb_sent_bytes"` // bytes of RDB sent to chan
+	RdbSentHuman     string `json:"rdb_sent_human"`
 
 	// aof info
 	AofReceivedOffset int64  `json:"aof_received_offset"` // offset of AOF received from master
 	AofSentOffset     int64  `json:"aof_sent_offset"`     // offset of AOF sent to chan
 	AofReceivedBytes  uint64 `json:"aof_received_bytes"`  // bytes of AOF received from master
+	AofReceivedHuman  string `json:"aof_received_human"`
 }
 
 func (s syncStandaloneReaderStat) MarshalJSON() ([]byte, error) {
-	rdbFileSizeHuman, rdbReceivedHuman, rdbSentHuman, aofReceivedHuman := "", "", "", ""
 	if s.RdbFileSizeBytes != 0 {
-		rdbFileSizeHuman = humanize.IBytes(s.RdbFileSizeBytes)
+		s.RdbFileSizeHuman = humanize.IBytes(s.RdbFileSizeBytes)
 	}
 	if s.RdbReceivedBytes != 0 {
-		rdbReceivedHuman = humanize.IBytes(s.RdbReceivedBytes)
+		s.RdbReceivedHuman = humanize.IBytes(s.RdbReceivedBytes)
 	}
 	if s.RdbSentBytes != 0 {
-		rdbSentHuman = humanize.IBytes(s.RdbSentBytes)
+		s.RdbSentHuman = humanize.IBytes(s.RdbSentBytes)
 	}
 	if s.AofReceivedBytes != 0 {
-		aofReceivedHuman = humanize.IBytes(s.AofReceivedBytes)
+		s.AofReceivedHuman = humanize.IBytes(s.AofReceivedBytes)
 	}
 
 	type aliasStat syncStandaloneReaderStat // alias to avoid infinite recursion
-	return json.Marshal(struct {
-		aliasStat
-		RdbFileSizeHuman string `json:"rdb_file_size_human"`
-		RdbReceivedHuman string `json:"rdb_received_human"`
-		RdbSentHuman     string `json:"rdb_sent_human"`
-		AofReceivedHuman string `json:"aof_received_human"`
-	}{
-		aliasStat:        aliasStat(s),
-		RdbFileSizeHuman: rdbFileSizeHuman,
-		RdbReceivedHuman: rdbReceivedHuman,
-		RdbSentHuman:     rdbSentHuman,
-		AofReceivedHuman: aofReceivedHuman,
-	})
+	return json.Marshal(aliasStat(s))
 }
 
 type syncStandaloneReader struct {
@@ -385,9 +376,7 @@ func (r *syncStandaloneReader) receiveRDBWithDiskless(marker string, wt io.Write
 	bMarker := []byte(marker)
 	var lastBytes []byte
 	for {
-		if lastBytes != nil { // add previous tail
-			copy(buf, lastBytes)
-		}
+		copy(buf, lastBytes) // copy previous tail bytes to head of buf
 
 		nread, err := r.client.Read(buf[len(lastBytes):])
 		if err != nil {
